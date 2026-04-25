@@ -23,17 +23,17 @@ import {
   type ParsedWithdrawInstruction,
 } from "../instructions";
 
-export const VAULT_PROGRAM_ADDRESS =
+export const VESTING_PROGRAM_ADDRESS =
   "EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v" as Address<"EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v">;
 
-export enum VaultInstruction {
+export enum VestingInstruction {
   Deposit,
   Withdraw,
 }
 
-export function identifyVaultInstruction(
+export function identifyVestingInstruction(
   instruction: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
-): VaultInstruction {
+): VestingInstruction {
   const data = "data" in instruction ? instruction.data : instruction;
   if (
     containsBytes(
@@ -44,7 +44,7 @@ export function identifyVaultInstruction(
       0,
     )
   ) {
-    return VaultInstruction.Deposit;
+    return VestingInstruction.Deposit;
   }
   if (
     containsBytes(
@@ -55,39 +55,39 @@ export function identifyVaultInstruction(
       0,
     )
   ) {
-    return VaultInstruction.Withdraw;
+    return VestingInstruction.Withdraw;
   }
   throw new Error(
-    "The provided instruction could not be identified as a vault instruction.",
+    "The provided instruction could not be identified as a vesting instruction.",
   );
 }
 
-export type ParsedVaultInstruction<
+export type ParsedVestingInstruction<
   TProgram extends string = "EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v",
 > =
   | ({
-      instructionType: VaultInstruction.Deposit;
+      instructionType: VestingInstruction.Deposit;
     } & ParsedDepositInstruction<TProgram>)
   | ({
-      instructionType: VaultInstruction.Withdraw;
+      instructionType: VestingInstruction.Withdraw;
     } & ParsedWithdrawInstruction<TProgram>);
 
-export function parseVaultInstruction<TProgram extends string>(
+export function parseVestingInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
-): ParsedVaultInstruction<TProgram> {
-  const instructionType = identifyVaultInstruction(instruction);
+): ParsedVestingInstruction<TProgram> {
+  const instructionType = identifyVestingInstruction(instruction);
   switch (instructionType) {
-    case VaultInstruction.Deposit: {
+    case VestingInstruction.Deposit: {
       assertIsInstructionWithAccounts(instruction);
       return {
-        instructionType: VaultInstruction.Deposit,
+        instructionType: VestingInstruction.Deposit,
         ...parseDepositInstruction(instruction),
       };
     }
-    case VaultInstruction.Withdraw: {
+    case VestingInstruction.Withdraw: {
       assertIsInstructionWithAccounts(instruction);
       return {
-        instructionType: VaultInstruction.Withdraw,
+        instructionType: VestingInstruction.Withdraw,
         ...parseWithdrawInstruction(instruction),
       };
     }

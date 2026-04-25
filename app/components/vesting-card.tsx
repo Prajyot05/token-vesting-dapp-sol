@@ -11,40 +11,40 @@ import {
   getDepositInstruction,
   getWithdrawInstruction,
   getWithdrawInstructionAsync,
-} from "../generated/vault";
+} from "../generated/vesting";
 import { parseTransactionError } from "../lib/errors";
 import { useCluster } from "./cluster-context";
 
-export function VaultCard() {
+export function VestingCard() {
   const { wallet, signer, status } = useWallet();
   const { send, isSending } = useSendTransaction();
   const { getExplorerUrl } = useCluster();
 
   const [amount, setAmount] = useState("");
-  const [vaultAddress, setVaultAddress] = useState<Address | null>(null);
+  const [vestingAddress, setVestingAddress] = useState<Address | null>(null);
 
   const walletAddress = wallet?.account.address;
 
-  // Derive vault PDA from generated IDL client
+  // Derive vesting PDA from generated IDL client
   useEffect(() => {
     let cancelled = false;
 
-    async function deriveVault() {
+    async function deriveVesting() {
       if (!signer) {
-        setVaultAddress(null);
+        setVestingAddress(null);
         return;
       }
 
       try {
         const ix = await getWithdrawInstructionAsync({ signer });
         const pda = ix.accounts[1]?.address;
-        if (!cancelled) setVaultAddress((pda as Address) ?? null);
+        if (!cancelled) setVestingAddress((pda as Address) ?? null);
       } catch {
-        if (!cancelled) setVaultAddress(null);
+        if (!cancelled) setVestingAddress(null);
       }
     }
 
-    void deriveVault();
+    void deriveVesting();
     return () => {
       cancelled = true;
     };
@@ -53,11 +53,11 @@ export function VaultCard() {
   // Get balances
   const walletBalance = useBalance(walletAddress);
   const walletLamports = walletBalance?.lamports;
-  const vaultBalance = useBalance(vaultAddress ?? undefined);
-  const vaultLamports = vaultBalance?.lamports;
+  const vestingBalance = useBalance(vestingAddress ?? undefined);
+  const vestingLamports = vestingBalance?.lamports;
 
   const handleDeposit = useCallback(async () => {
-    if (!walletAddress || !vaultAddress || !amount || !signer) return;
+    if (!walletAddress || !vestingAddress || !amount || !signer) return;
 
     const depositLamports = lamportsFromSol(parseFloat(amount));
     if (walletLamports != null && walletLamports < depositLamports) {
@@ -70,7 +70,7 @@ export function VaultCard() {
     try {
       const instruction = getDepositInstruction({
         signer,
-        vault: vaultAddress,
+        vesting: vestingAddress,
         amount: lamportsFromSol(parseFloat(amount)),
       });
 
@@ -93,15 +93,15 @@ export function VaultCard() {
       console.error("Deposit failed:", err);
       toast.error(parseTransactionError(err));
     }
-  }, [walletAddress, vaultAddress, amount, signer, send, getExplorerUrl]);
+  }, [walletAddress, vestingAddress, amount, signer, send, getExplorerUrl]);
 
   const handleWithdraw = useCallback(async () => {
-    if (!walletAddress || !vaultAddress || !signer) return;
+    if (!walletAddress || !vestingAddress || !signer) return;
 
     try {
       const instruction = getWithdrawInstruction({
         signer,
-        vault: vaultAddress,
+        vesting: vestingAddress,
       });
 
       const signature = await send({ instructions: [instruction] });
@@ -122,15 +122,15 @@ export function VaultCard() {
       console.error("Withdraw failed:", err);
       toast.error(parseTransactionError(err));
     }
-  }, [walletAddress, vaultAddress, signer, send, getExplorerUrl]);
+  }, [walletAddress, vestingAddress, signer, send, getExplorerUrl]);
 
   if (status !== "connected") {
     return (
       <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
         <div className="space-y-1">
-          <p className="text-lg font-semibold">SOL Vault</p>
+          <p className="text-lg font-semibold">SOL Vesting</p>
           <p className="text-sm text-muted">
-            Connect your wallet to interact with the vault program.
+            Connect your wallet to interact with the vesting program.
           </p>
         </div>
         <div className="rounded-lg bg-cream/50 p-4 text-center text-sm text-muted">
@@ -144,38 +144,38 @@ export function VaultCard() {
     <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <p className="text-lg font-semibold">SOL Vault</p>
+          <p className="text-lg font-semibold">SOL Vesting</p>
           <p className="text-sm text-muted">
-            Deposit SOL into your personal vault PDA and withdraw anytime.
+            Deposit SOL into your personal vesting PDA and withdraw anytime.
           </p>
         </div>
         <span className="rounded-full bg-cream px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground/80">
-          {(vaultLamports ?? 0n) > 0n ? "Has funds" : "Empty"}
+          {(vestingLamports ?? 0n) > 0n ? "Has funds" : "Empty"}
         </span>
       </div>
 
-      {/* Vault Balance */}
+      {/* Vesting Balance */}
       <div className="rounded-xl border border-border-low bg-cream/30 p-4">
         <p className="text-xs uppercase tracking-wide text-muted">
-          Vault Balance
+          Vesting Balance
         </p>
         <p className="mt-1 text-3xl font-bold tabular-nums">
-          {vaultLamports ? lamportsToSolString(vaultLamports) : "0"}{" "}
+          {vestingLamports ? lamportsToSolString(vestingLamports) : "0"}{" "}
           <span className="text-lg font-normal text-muted">SOL</span>
         </p>
-        {vaultAddress && (vaultLamports ?? 0n) > 0n && (
+        {vestingAddress && (vestingLamports ?? 0n) > 0n && (
           <p className="group mt-2 flex items-center gap-1.5">
             <a
-              href={getExplorerUrl(`/address/${vaultAddress}`)}
+              href={getExplorerUrl(`/address/${vestingAddress}`)}
               target="_blank"
               rel="noopener noreferrer"
               className="truncate font-mono text-xs text-muted underline underline-offset-2"
             >
-              {vaultAddress}
+              {vestingAddress}
             </a>
             <span
               className="relative cursor-default text-muted"
-              title="This is your vault PDA — a program-derived account that holds your deposited SOL. Only you can withdraw from it."
+              title="This is your vesting PDA — a program-derived account that holds your deposited SOL. Only you can withdraw from it."
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -213,16 +213,16 @@ export function VaultCard() {
               isSending ||
               !amount ||
               parseFloat(amount) <= 0 ||
-              (vaultLamports ?? 0n) > 0n
+              (vestingLamports ?? 0n) > 0n
             }
             className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
           >
             {isSending ? "Confirming..." : "Deposit"}
           </button>
         </div>
-        {(vaultLamports ?? 0n) > 0n && (
+        {(vestingLamports ?? 0n) > 0n && (
           <p className="text-xs text-muted">
-            Vault already has funds. Withdraw first before depositing again.
+            Vesting already has funds. Withdraw first before depositing again.
           </p>
         )}
       </div>
@@ -230,7 +230,7 @@ export function VaultCard() {
       {/* Withdraw Button */}
       <button
         onClick={handleWithdraw}
-        disabled={isSending || !vaultLamports}
+        disabled={isSending || !vestingLamports}
         className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm font-medium shadow-xs transition hover:bg-cream disabled:opacity-50 disabled:pointer-events-none"
       >
         {isSending ? "Confirming..." : "Withdraw All"}
@@ -239,7 +239,7 @@ export function VaultCard() {
       {/* Educational Footer */}
       <div className="border-t border-border-low pt-4 text-xs text-muted">
         <p className="mb-2">
-          This vault is an{" "}
+          This vesting is an{" "}
           <a
             href="https://www.anchor-lang.com/docs"
             target="_blank"

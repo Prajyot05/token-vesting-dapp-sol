@@ -3,15 +3,15 @@ import {
   SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM,
 } from "@solana/kit";
 import {
-  getVaultErrorMessage,
-  VAULT_ERROR__VAULT_ALREADY_EXISTS,
-  VAULT_ERROR__INVALID_AMOUNT,
-  type VaultError,
-} from "../generated/vault";
+  getVestingErrorMessage,
+  VESTING_ERROR__VESTING_ALREADY_EXISTS,
+  VESTING_ERROR__INVALID_AMOUNT,
+  type VestingError,
+} from "../generated/vesting";
 
-const VAULT_ERROR_CODES: Record<number, VaultError> = {
-  [VAULT_ERROR__VAULT_ALREADY_EXISTS]: VAULT_ERROR__VAULT_ALREADY_EXISTS,
-  [VAULT_ERROR__INVALID_AMOUNT]: VAULT_ERROR__INVALID_AMOUNT,
+const VESTING_ERROR_CODES: Record<number, VestingError> = {
+  [VESTING_ERROR__VESTING_ALREADY_EXISTS]: VESTING_ERROR__VESTING_ALREADY_EXISTS,
+  [VESTING_ERROR__INVALID_AMOUNT]: VESTING_ERROR__INVALID_AMOUNT,
 };
 
 export function parseTransactionError(err: unknown): string {
@@ -25,9 +25,9 @@ export function parseTransactionError(err: unknown): string {
     isSolanaError(err, SOLANA_ERROR__INSTRUCTION_ERROR__CUSTOM) &&
     typeof err.context?.code === "number"
   ) {
-    const vaultError = VAULT_ERROR_CODES[err.context.code];
-    if (vaultError !== undefined) {
-      return getVaultErrorMessage(vaultError);
+    const vestingError = VESTING_ERROR_CODES[err.context.code];
+    if (vestingError !== undefined) {
+      return getVestingErrorMessage(vestingError);
     }
   }
 

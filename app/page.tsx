@@ -8,7 +8,7 @@ import { useBalance } from "./lib/hooks/use-balance";
 import { lamportsToSolString } from "./lib/lamports";
 import { useSolanaClient } from "./lib/solana-client-context";
 import { ellipsify } from "./lib/explorer";
-import { VaultCard } from "./components/vault-card";
+import { VestingCard } from "./components/vesting-card";
 import { GridBackground } from "./components/grid-background";
 import { ThemeToggle } from "./components/theme-toggle";
 import { ClusterSelect } from "./components/cluster-select";
@@ -99,19 +99,19 @@ export default function Home() {
               <div>
                 <h1 className="font-black tracking-tight text-foreground">
                   <span className="block text-6xl md:text-7xl">Anchor</span>
-                  <span className="block text-7xl md:text-8xl">Vault</span>
+                  <span className="block text-7xl md:text-8xl">Vesting</span>
                 </h1>
               </div>
 
               <div className="flex max-w-2xl flex-col gap-3">
                 <p className="text-base leading-relaxed text-foreground/50">
-                  This program creates a personal vault for each user using a
+                  This program creates a personal vesting for each user using a
                   Program Derived Address (PDA). Connect your wallet, deposit
-                  SOL into your vault, and withdraw it anytime. Only you can
+                  SOL into your vesting, and withdraw it anytime. Only you can
                   access your funds.
                 </p>
                 <p className="text-sm leading-relaxed text-foreground/40">
-                  The vault is an{" "}
+                  The vesting is an{" "}
                   <a
                     href="https://www.anchor-lang.com/docs/introduction"
                     target="_blank"
@@ -261,8 +261,8 @@ export default function Home() {
               </section>
             )}
 
-            {/* Vault Program Section */}
-            <VaultCard />
+            {/* Vesting Program Section */}
+            <VestingCard />
           </div>
         </main>
       </div>

@@ -14,12 +14,12 @@ import {
   type ProgramDerivedAddress,
 } from "@solana/kit";
 
-export type VaultSeeds = {
+export type VestingSeeds = {
   signer: Address;
 };
 
-export async function findVaultPda(
-  seeds: VaultSeeds,
+export async function findVestingPda(
+  seeds: VestingSeeds,
   config: { programAddress?: Address | undefined } = {},
 ): Promise<ProgramDerivedAddress> {
   const {
