@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::ID as PROGRAM_ID;
+    use crate::ID as ANCHOR_PROGRAM_ID;
     use litesvm::LiteSVM;
     use solana_sdk::{
         instruction::{AccountMeta, Instruction},
@@ -14,7 +14,8 @@ mod tests {
     const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 
     fn get_vesting_pda(signer: &Pubkey) -> (Pubkey, u8) {
-        Pubkey::find_program_address(&[b"vesting", signer.as_ref()], &PROGRAM_ID)
+        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+        Pubkey::find_program_address(&[b"vesting", signer.as_ref()], &program_id)
     }
 
     fn create_deposit_ix(signer: &Pubkey, vesting: &Pubkey, amount: u64) -> Instruction {
@@ -23,8 +24,10 @@ mod tests {
         let mut data = discriminator.to_vec();
         data.extend_from_slice(&amount.to_le_bytes());
 
+        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+
         Instruction {
-            program_id: PROGRAM_ID,
+            program_id,
             accounts: vec![
                 AccountMeta::new(*signer, true),
                 AccountMeta::new(*vesting, false),
@@ -38,8 +41,10 @@ mod tests {
         // Anchor discriminator for "withdraw" = hash("global:withdraw")[0..8]
         let discriminator: [u8; 8] = [183, 18, 70, 156, 148, 109, 161, 34];
 
+        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+
         Instruction {
-            program_id: PROGRAM_ID,
+            program_id,
             accounts: vec![
                 AccountMeta::new(*signer, true),
                 AccountMeta::new(*vesting, false),
@@ -55,7 +60,8 @@ mod tests {
 
         // Load the program
         let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
-        svm.add_program(PROGRAM_ID, program_bytes);
+        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+        svm.add_program(program_id, program_bytes);
 
         // Create a user with some SOL
         let user = Keypair::new();
@@ -110,7 +116,8 @@ mod tests {
         let mut svm = LiteSVM::new();
 
         let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
-        svm.add_program(PROGRAM_ID, program_bytes);
+        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+        svm.add_program(program_id, program_bytes);
 
         let user = Keypair::new();
         svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
@@ -147,7 +154,8 @@ mod tests {
         let mut svm = LiteSVM::new();
 
         let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
-        svm.add_program(PROGRAM_ID, program_bytes);
+        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+        svm.add_program(program_id, program_bytes);
 
         let user = Keypair::new();
         svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();

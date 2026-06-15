@@ -1,11 +1,12 @@
 [toolchain]
+anchor_version = "1.0.2"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.devnet]
-vesting = "EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v"
+vesting = "FnGSzFa8EmF8CwrVTxXSUw3BmKN3LXVgRHy4PyJLbJuS"
 
 [registry]
 url = "https://api.apr.dev"
