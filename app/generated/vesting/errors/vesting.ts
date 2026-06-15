@@ -14,20 +14,36 @@ import {
 } from "@solana/kit";
 import { VESTING_PROGRAM_ADDRESS } from "../programs";
 
-/** VestingAlreadyExists: Vesting already exists */
-export const VESTING_ERROR__VESTING_ALREADY_EXISTS = 0x1770; // 6000
-/** InvalidAmount: Invalid amount */
-export const VESTING_ERROR__INVALID_AMOUNT = 0x1771; // 6001
+/** ClaimNotAvailableYet: Claiming is not available yet. */
+export const VESTING_ERROR__CLAIM_NOT_AVAILABLE_YET = 0x1770; // 6000
+/** NothingToClaim: There is nothing to claim. */
+export const VESTING_ERROR__NOTHING_TO_CLAIM = 0x1771; // 6001
+/** InvalidVestingPeriod: The start time must be before the end time and cliff time must be valid. */
+export const VESTING_ERROR__INVALID_VESTING_PERIOD = 0x1772; // 6002
+/** InvalidAmount: The total amount must be greater than zero. */
+export const VESTING_ERROR__INVALID_AMOUNT = 0x1773; // 6003
+/** CompanyNameTooLong: The company name must not exceed 50 characters. */
+export const VESTING_ERROR__COMPANY_NAME_TOO_LONG = 0x1774; // 6004
+/** CalculationOverflow: Math calculation overflowed. */
+export const VESTING_ERROR__CALCULATION_OVERFLOW = 0x1775; // 6005
 
 export type VestingError =
+  | typeof VESTING_ERROR__CALCULATION_OVERFLOW
+  | typeof VESTING_ERROR__CLAIM_NOT_AVAILABLE_YET
+  | typeof VESTING_ERROR__COMPANY_NAME_TOO_LONG
   | typeof VESTING_ERROR__INVALID_AMOUNT
-  | typeof VESTING_ERROR__VESTING_ALREADY_EXISTS;
+  | typeof VESTING_ERROR__INVALID_VESTING_PERIOD
+  | typeof VESTING_ERROR__NOTHING_TO_CLAIM;
 
 let vestingErrorMessages: Record<VestingError, string> | undefined;
 if (process.env.NODE_ENV !== "production") {
   vestingErrorMessages = {
-    [VESTING_ERROR__INVALID_AMOUNT]: `Invalid amount`,
-    [VESTING_ERROR__VESTING_ALREADY_EXISTS]: `Vesting already exists`,
+    [VESTING_ERROR__CALCULATION_OVERFLOW]: `Math calculation overflowed.`,
+    [VESTING_ERROR__CLAIM_NOT_AVAILABLE_YET]: `Claiming is not available yet.`,
+    [VESTING_ERROR__COMPANY_NAME_TOO_LONG]: `The company name must not exceed 50 characters.`,
+    [VESTING_ERROR__INVALID_AMOUNT]: `The total amount must be greater than zero.`,
+    [VESTING_ERROR__INVALID_VESTING_PERIOD]: `The start time must be before the end time and cliff time must be valid.`,
+    [VESTING_ERROR__NOTHING_TO_CLAIM]: `There is nothing to claim.`,
   };
 }
 

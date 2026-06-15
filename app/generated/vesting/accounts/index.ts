@@ -6,8 +6,5 @@
  * @see https://github.com/codama-idl/codama
  */
 
-export * from "./accounts";
-export * from "./errors";
-export * from "./instructions";
-export * from "./pdas";
-export { VESTING_PROGRAM_ADDRESS } from "./programs";
+export * from "./employeeAccount";
+export * from "./vestingAccount";

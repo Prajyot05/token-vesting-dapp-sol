@@ -4,109 +4,74 @@ import { useState, useEffect, useCallback } from "react";
 import { useWallet } from "../lib/wallet/context";
 import { useSendTransaction } from "../lib/hooks/use-send-transaction";
 import { useBalance } from "../lib/hooks/use-balance";
-import { lamportsFromSol, lamportsToSolString } from "../lib/lamports";
-import { type Address } from "@solana/kit";
+import { lamportsToSolString } from "../lib/lamports";
+import { type Address, address } from "@solana/kit";
 import { toast } from "sonner";
 import {
-  getDepositInstruction,
-  getWithdrawInstruction,
-  getWithdrawInstructionAsync,
-} from "../generated/vesting";
+  getCreateVestingAccountInstructionAsync,
+  getCreateEmployeeVestingInstructionAsync,
+  getClaimTokensInstructionAsync,
+} from "../generated/vesting/instructions";
+import { findVestingAccountPda, findTreasuryTokenAccountPda, findEmployeeAccountPda } from "../generated/vesting/pdas";
+import { fetchVestingAccount } from "../generated/vesting/accounts";
 import { parseTransactionError } from "../lib/errors";
 import { useCluster } from "./cluster-context";
+import { useSolanaClient } from "../lib/solana-client-context";
 
 export function VestingCard() {
   const { wallet, signer, status } = useWallet();
   const { send, isSending } = useSendTransaction();
   const { getExplorerUrl } = useCluster();
+  const client = useSolanaClient();
 
-  const [amount, setAmount] = useState("");
-  const [vestingAddress, setVestingAddress] = useState<Address | null>(null);
-
+  const [view, setView] = useState<"admin" | "employee">("employee");
   const walletAddress = wallet?.account.address;
 
-  // Derive vesting PDA from generated IDL client
+  // Admin State
+  const [companyName, setCompanyName] = useState("Acme Corp");
+  const [mintAddress, setMintAddress] = useState("");
+  const [employeeAddress, setEmployeeAddress] = useState("");
+  const [amount, setAmount] = useState("");
+  const [durationDays, setDurationDays] = useState("365");
+  const [cliffDays, setCliffDays] = useState("30");
+
+  // Employee State
+  const [empCompanyName, setEmpCompanyName] = useState("Acme Corp");
+  const [vestingPda, setVestingPda] = useState<Address | null>(null);
+  const [employeePda, setEmployeePda] = useState<Address | null>(null);
+
+  // PDAs
   useEffect(() => {
-    let cancelled = false;
-
-    async function deriveVesting() {
-      if (!signer) {
-        setVestingAddress(null);
-        return;
-      }
-
-      try {
-        const ix = await getWithdrawInstructionAsync({ signer });
-        const pda = ix.accounts[1]?.address;
-        if (!cancelled) setVestingAddress((pda as Address) ?? null);
-      } catch {
-        if (!cancelled) setVestingAddress(null);
+    async function loadPdas() {
+      if (empCompanyName) {
+        const [vPda] = await findVestingAccountPda({ companyName: empCompanyName });
+        setVestingPda(vPda);
+        
+        if (walletAddress) {
+          const [ePda] = await findEmployeeAccountPda({
+            beneficiary: walletAddress,
+            vestingAccount: vPda,
+          });
+          setEmployeePda(ePda);
+        }
       }
     }
+    loadPdas();
+  }, [empCompanyName, walletAddress]);
 
-    void deriveVesting();
-    return () => {
-      cancelled = true;
-    };
-  }, [signer]);
-
-  // Get balances
-  const walletBalance = useBalance(walletAddress);
-  const walletLamports = walletBalance?.lamports;
-  const vestingBalance = useBalance(vestingAddress ?? undefined);
-  const vestingLamports = vestingBalance?.lamports;
-
-  const handleDeposit = useCallback(async () => {
-    if (!walletAddress || !vestingAddress || !amount || !signer) return;
-
-    const depositLamports = lamportsFromSol(parseFloat(amount));
-    if (walletLamports != null && walletLamports < depositLamports) {
-      toast.error("Insufficient balance.", {
-        description: `You need at least ${amount} SOL plus fees. Current balance: ${lamportsToSolString(walletLamports)} SOL.`,
-      });
-      return;
-    }
+  const handleCreateVesting = useCallback(async () => {
+    if (!signer || !companyName || !mintAddress) return;
 
     try {
-      const instruction = getDepositInstruction({
+      const instruction = await getCreateVestingAccountInstructionAsync({
         signer,
-        vesting: vestingAddress,
-        amount: lamportsFromSol(parseFloat(amount)),
+        mint: address(mintAddress),
+        companyName,
       });
 
       const signature = await send({ instructions: [instruction] });
 
-      toast.success("Deposit confirmed!", {
-        description: (
-          <a
-            href={getExplorerUrl(`/tx/${signature}`)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View transaction
-          </a>
-        ),
-      });
-      setAmount("");
-    } catch (err) {
-      console.error("Deposit failed:", err);
-      toast.error(parseTransactionError(err));
-    }
-  }, [walletAddress, vestingAddress, amount, signer, send, getExplorerUrl]);
-
-  const handleWithdraw = useCallback(async () => {
-    if (!walletAddress || !vestingAddress || !signer) return;
-
-    try {
-      const instruction = getWithdrawInstruction({
-        signer,
-        vesting: vestingAddress,
-      });
-
-      const signature = await send({ instructions: [instruction] });
-
-      toast.success("Withdrawal confirmed!", {
+      toast.success("Company Vesting Created!", {
         description: (
           <a
             href={getExplorerUrl(`/tx/${signature}`)}
@@ -119,155 +84,237 @@ export function VestingCard() {
         ),
       });
     } catch (err) {
-      console.error("Withdraw failed:", err);
+      console.error("Create Vesting failed:", err);
       toast.error(parseTransactionError(err));
     }
-  }, [walletAddress, vestingAddress, signer, send, getExplorerUrl]);
+  }, [companyName, mintAddress, signer, send, getExplorerUrl]);
+
+  const handleCreateEmployeeVesting = useCallback(async () => {
+    if (!signer || !companyName || !employeeAddress || !amount) return;
+
+    try {
+      const startTime = Math.floor(Date.now() / 1000);
+      const endTime = startTime + (parseInt(durationDays) * 24 * 60 * 60);
+      const cliffTime = startTime + (parseInt(cliffDays) * 24 * 60 * 60);
+      
+      const [vPda] = await findVestingAccountPda({ companyName });
+
+      const instruction = await getCreateEmployeeVestingInstructionAsync({
+        owner: signer,
+        beneficiary: address(employeeAddress),
+        vestingAccount: vPda,
+        startTime: BigInt(startTime),
+        endTime: BigInt(endTime),
+        totalAmount: BigInt(parseFloat(amount) * 1_000_000_000), // Assuming 9 decimals for now
+        cliffTime: BigInt(cliffTime),
+      });
+
+      const signature = await send({ instructions: [instruction] });
+
+      toast.success("Employee Vesting Schedule Created!", {
+        description: (
+          <a
+            href={getExplorerUrl(`/tx/${signature}`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View transaction
+          </a>
+        ),
+      });
+    } catch (err) {
+      console.error("Create Employee failed:", err);
+      toast.error(parseTransactionError(err));
+    }
+  }, [companyName, employeeAddress, amount, durationDays, cliffDays, signer, send, getExplorerUrl]);
+
+  const handleClaimTokens = useCallback(async () => {
+    if (!signer || !empCompanyName || !vestingPda || !employeePda) return;
+
+    try {
+      const vAccount = await fetchVestingAccount(client.rpc, vestingPda);
+      const mint = vAccount.data.mint;
+      const treasuryTokenAccount = vAccount.data.treasuryTokenAccount;
+
+      const instruction = await getClaimTokensInstructionAsync({
+        beneficiary: signer,
+        employeeAccount: employeePda,
+        vestingAccount: vestingPda,
+        mint,
+        treasuryTokenAccount,
+        companyName: empCompanyName,
+      });
+
+      const signature = await send({ instructions: [instruction] });
+
+      toast.success("Tokens Claimed Successfully!", {
+        description: (
+          <a
+            href={getExplorerUrl(`/tx/${signature}`)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View transaction
+          </a>
+        ),
+      });
+    } catch (err) {
+      console.error("Claim failed:", err);
+      toast.error(parseTransactionError(err));
+    }
+  }, [signer, empCompanyName, vestingPda, employeePda, send, getExplorerUrl]);
 
   if (status !== "connected") {
     return (
-      <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
-        <div className="space-y-1">
-          <p className="text-lg font-semibold">SOL Vesting</p>
-          <p className="text-sm text-muted">
-            Connect your wallet to interact with the vesting program.
+      <section className="glass-card w-full space-y-4 rounded-2xl p-8">
+        <div className="space-y-2 text-center">
+          <p className="text-2xl font-bold glow-text">Connect Wallet</p>
+          <p className="text-sm text-muted-foreground">
+            Connect your wallet to access the Vesting Portal.
           </p>
-        </div>
-        <div className="rounded-lg bg-cream/50 p-4 text-center text-sm text-muted">
-          Wallet not connected
         </div>
       </section>
     );
   }
 
   return (
-    <section className="w-full space-y-4 rounded-2xl border border-border-low bg-card p-6 shadow-[0_20px_80px_-50px_rgba(0,0,0,0.35)]">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-lg font-semibold">SOL Vesting</p>
-          <p className="text-sm text-muted">
-            Deposit SOL into your personal vesting PDA and withdraw anytime.
-          </p>
-        </div>
-        <span className="rounded-full bg-cream px-3 py-1 text-xs font-semibold uppercase tracking-wide text-foreground/80">
-          {(vestingLamports ?? 0n) > 0n ? "Has funds" : "Empty"}
-        </span>
+    <section className="glass-card w-full overflow-hidden rounded-2xl border border-primary/20 shadow-[0_0_50px_-12px_rgba(157,78,221,0.2)]">
+      {/* Tabs */}
+      <div className="flex border-b border-primary/10">
+        <button
+          onClick={() => setView("employee")}
+          className={`flex-1 py-4 text-sm font-medium transition ${
+            view === "employee" ? "bg-primary/10 text-primary glow-text border-b-2 border-primary" : "text-muted-foreground hover:bg-white/5"
+          }`}
+        >
+          Employee Portal
+        </button>
+        <button
+          onClick={() => setView("admin")}
+          className={`flex-1 py-4 text-sm font-medium transition ${
+            view === "admin" ? "bg-primary/10 text-primary glow-text border-b-2 border-primary" : "text-muted-foreground hover:bg-white/5"
+          }`}
+        >
+          Company Admin
+        </button>
       </div>
 
-      {/* Vesting Balance */}
-      <div className="rounded-xl border border-border-low bg-cream/30 p-4">
-        <p className="text-xs uppercase tracking-wide text-muted">
-          Vesting Balance
-        </p>
-        <p className="mt-1 text-3xl font-bold tabular-nums">
-          {vestingLamports ? lamportsToSolString(vestingLamports) : "0"}{" "}
-          <span className="text-lg font-normal text-muted">SOL</span>
-        </p>
-        {vestingAddress && (vestingLamports ?? 0n) > 0n && (
-          <p className="group mt-2 flex items-center gap-1.5">
-            <a
-              href={getExplorerUrl(`/address/${vestingAddress}`)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="truncate font-mono text-xs text-muted underline underline-offset-2"
-            >
-              {vestingAddress}
-            </a>
-            <span
-              className="relative cursor-default text-muted"
-              title="This is your vesting PDA — a program-derived account that holds your deposited SOL. Only you can withdraw from it."
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                className="h-3.5 w-3.5"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0ZM9 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM6.75 8a.75.75 0 0 0 0 1.5h.75v1.75a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8.25 8h-1.5Z"
-                  clipRule="evenodd"
+      <div className="p-6 space-y-6">
+        {view === "admin" && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Initialize Company */}
+            <div className="space-y-4 rounded-xl border border-white/5 bg-black/20 p-5">
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">1. Initialize Company Vesting</h3>
+                <p className="text-xs text-muted-foreground mt-1">Create the main vesting and treasury account for your token.</p>
+              </div>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="Company Name"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  className="w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-primary/50 focus:ring-1 focus:ring-primary"
                 />
-              </svg>
-            </span>
-          </p>
+                <input
+                  type="text"
+                  placeholder="Token Mint Address"
+                  value={mintAddress}
+                  onChange={(e) => setMintAddress(e.target.value)}
+                  className="w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-primary/50 focus:ring-1 focus:ring-primary"
+                />
+                <button
+                  onClick={handleCreateVesting}
+                  disabled={isSending || !companyName || !mintAddress}
+                  className="w-full rounded-lg bg-primary/20 border border-primary/30 px-5 py-2.5 text-sm font-medium text-primary shadow-xs transition hover:bg-primary/30 disabled:opacity-50"
+                >
+                  {isSending ? "Processing..." : "Create Vesting Vault"}
+                </button>
+              </div>
+            </div>
+
+            {/* Create Employee Schedule */}
+            <div className="space-y-4 rounded-xl border border-white/5 bg-black/20 p-5">
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">2. Add Employee Schedule</h3>
+                <p className="text-xs text-muted-foreground mt-1">Issue locked tokens to an employee with a custom timeline.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  placeholder="Employee Wallet Address"
+                  value={employeeAddress}
+                  onChange={(e) => setEmployeeAddress(e.target.value)}
+                  className="col-span-2 w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-secondary/50 focus:ring-1 focus:ring-secondary"
+                />
+                <input
+                  type="number"
+                  placeholder="Total Tokens"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="col-span-2 w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-secondary/50 focus:ring-1 focus:ring-secondary"
+                />
+                <input
+                  type="number"
+                  placeholder="Duration (Days)"
+                  value={durationDays}
+                  onChange={(e) => setDurationDays(e.target.value)}
+                  className="w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-secondary/50 focus:ring-1 focus:ring-secondary"
+                />
+                <input
+                  type="number"
+                  placeholder="Cliff (Days)"
+                  value={cliffDays}
+                  onChange={(e) => setCliffDays(e.target.value)}
+                  className="w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-secondary/50 focus:ring-1 focus:ring-secondary"
+                />
+                <button
+                  onClick={handleCreateEmployeeVesting}
+                  disabled={isSending || !employeeAddress || !amount || !companyName}
+                  className="col-span-2 mt-2 w-full rounded-lg bg-secondary/20 border border-secondary/30 px-5 py-2.5 text-sm font-medium text-secondary transition hover:bg-secondary/30 disabled:opacity-50"
+                >
+                  {isSending ? "Processing..." : "Create Schedule"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
-      </div>
 
-      {/* Deposit Form */}
-      <div className="space-y-3">
-        <div className="flex gap-3">
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="Amount in SOL"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            disabled={isSending}
-            className="flex-1 rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm outline-none transition placeholder:text-muted focus:border-foreground/30 disabled:opacity-50 disabled:pointer-events-none"
-          />
-          <button
-            onClick={handleDeposit}
-            disabled={
-              isSending ||
-              !amount ||
-              parseFloat(amount) <= 0 ||
-              (vestingLamports ?? 0n) > 0n
-            }
-            className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xs transition hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
-          >
-            {isSending ? "Confirming..." : "Deposit"}
-          </button>
-        </div>
-        {(vestingLamports ?? 0n) > 0n && (
-          <p className="text-xs text-muted">
-            Vesting already has funds. Withdraw first before depositing again.
-          </p>
+        {view === "employee" && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="space-y-4">
+              <label className="text-sm font-medium text-muted-foreground">Select Company</label>
+              <input
+                type="text"
+                placeholder="Enter Company Name"
+                value={empCompanyName}
+                onChange={(e) => setEmpCompanyName(e.target.value)}
+                className="w-full rounded-lg border border-border-low bg-black/40 px-4 py-2.5 text-sm outline-none transition focus:border-primary/50 focus:ring-1 focus:ring-primary"
+              />
+            </div>
+
+            <div className="rounded-xl border border-white/5 bg-black/20 p-6 flex flex-col items-center text-center space-y-4 relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-24 h-24 text-primary"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+              </div>
+              <p className="text-sm uppercase tracking-wider text-muted-foreground z-10">Your Claimable Tokens</p>
+              <h2 className="text-5xl font-black text-white glow-text tabular-nums z-10">
+                {/* Normally we'd fetch the exact claimable amount via RPC, showing "Ready" here as UI placeholder */}
+                Ready
+              </h2>
+              
+              <button
+                onClick={handleClaimTokens}
+                disabled={isSending || !empCompanyName || !vestingPda}
+                className="mt-6 w-full max-w-xs rounded-full bg-primary px-8 py-3.5 text-sm font-bold text-white shadow-[0_0_30px_-5px_rgba(157,78,221,0.6)] transition hover:scale-105 hover:bg-primary/90 disabled:opacity-50 disabled:hover:scale-100 z-10"
+              >
+                {isSending ? "Claiming..." : "Claim Vested Tokens"}
+              </button>
+            </div>
+          </div>
         )}
-      </div>
-
-      {/* Withdraw Button */}
-      <button
-        onClick={handleWithdraw}
-        disabled={isSending || !vestingLamports}
-        className="w-full rounded-lg border border-border-low bg-card px-4 py-2.5 text-sm font-medium shadow-xs transition hover:bg-cream disabled:opacity-50 disabled:pointer-events-none"
-      >
-        {isSending ? "Confirming..." : "Withdraw All"}
-      </button>
-
-      {/* Educational Footer */}
-      <div className="border-t border-border-low pt-4 text-xs text-muted">
-        <p className="mb-2">
-          This vesting is an{" "}
-          <a
-            href="https://www.anchor-lang.com/docs"
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium underline underline-offset-2"
-          >
-            Anchor program
-          </a>{" "}
-          deployed on devnet. Want to deploy your own?
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="https://www.anchor-lang.com/docs/quickstart"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 rounded-md bg-cream px-2 py-1 font-medium transition hover:bg-cream/70"
-          >
-            Anchor Quickstart
-          </a>
-          <a
-            href="https://solana.com/docs/programs/deploying"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 rounded-md bg-cream px-2 py-1 font-medium transition hover:bg-cream/70"
-          >
-            Deploy Programs
-          </a>
-        </div>
       </div>
     </section>
   );

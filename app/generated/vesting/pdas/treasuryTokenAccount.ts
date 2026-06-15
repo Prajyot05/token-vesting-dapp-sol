@@ -7,29 +7,34 @@
  */
 
 import {
-  getAddressEncoder,
   getBytesEncoder,
   getProgramDerivedAddress,
+  getUtf8Encoder,
   type Address,
   type ProgramDerivedAddress,
 } from "@solana/kit";
 
-export type VestingSeeds = {
-  signer: Address;
+export type TreasuryTokenAccountSeeds = {
+  companyName: string;
 };
 
-export async function findVestingPda(
-  seeds: VestingSeeds,
+export async function findTreasuryTokenAccountPda(
+  seeds: TreasuryTokenAccountSeeds,
   config: { programAddress?: Address | undefined } = {},
 ): Promise<ProgramDerivedAddress> {
   const {
-    programAddress = "EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v" as Address<"EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v">,
+    programAddress = "FnGSzFa8EmF8CwrVTxXSUw3BmKN3LXVgRHy4PyJLbJuS" as Address<"FnGSzFa8EmF8CwrVTxXSUw3BmKN3LXVgRHy4PyJLbJuS">,
   } = config;
   return await getProgramDerivedAddress({
     programAddress,
     seeds: [
-      getBytesEncoder().encode(new Uint8Array([118, 97, 117, 108, 116])),
-      getAddressEncoder().encode(seeds.signer),
+      getBytesEncoder().encode(
+        new Uint8Array([
+          118, 101, 115, 116, 105, 110, 103, 95, 116, 114, 101, 97, 115, 117,
+          114, 121,
+        ]),
+      ),
+      getUtf8Encoder().encode(seeds.companyName),
     ],
   });
 }

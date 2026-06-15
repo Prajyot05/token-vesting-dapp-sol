@@ -6,4 +6,6 @@
  * @see https://github.com/codama-idl/codama
  */
 
-export * from "./vesting";
+export * from "./employeeAccount";
+export * from "./treasuryTokenAccount";
+export * from "./vestingAccount";

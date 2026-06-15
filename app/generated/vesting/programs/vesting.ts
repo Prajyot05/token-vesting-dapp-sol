@@ -17,18 +17,57 @@ import {
   type ReadonlyUint8Array,
 } from "@solana/kit";
 import {
-  parseDepositInstruction,
-  parseWithdrawInstruction,
-  type ParsedDepositInstruction,
-  type ParsedWithdrawInstruction,
+  parseClaimTokensInstruction,
+  parseCreateEmployeeVestingInstruction,
+  parseCreateVestingAccountInstruction,
+  type ParsedClaimTokensInstruction,
+  type ParsedCreateEmployeeVestingInstruction,
+  type ParsedCreateVestingAccountInstruction,
 } from "../instructions";
 
 export const VESTING_PROGRAM_ADDRESS =
-  "EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v" as Address<"EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v">;
+  "FnGSzFa8EmF8CwrVTxXSUw3BmKN3LXVgRHy4PyJLbJuS" as Address<"FnGSzFa8EmF8CwrVTxXSUw3BmKN3LXVgRHy4PyJLbJuS">;
+
+export enum VestingAccount {
+  EmployeeAccount,
+  VestingAccount,
+}
+
+export function identifyVestingAccount(
+  account: { data: ReadonlyUint8Array } | ReadonlyUint8Array,
+): VestingAccount {
+  const data = "data" in account ? account.data : account;
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([65, 245, 87, 188, 58, 86, 209, 151]),
+      ),
+      0,
+    )
+  ) {
+    return VestingAccount.EmployeeAccount;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([102, 73, 10, 233, 200, 188, 228, 216]),
+      ),
+      0,
+    )
+  ) {
+    return VestingAccount.VestingAccount;
+  }
+  throw new Error(
+    "The provided account could not be identified as a vesting account.",
+  );
+}
 
 export enum VestingInstruction {
-  Deposit,
-  Withdraw,
+  ClaimTokens,
+  CreateEmployeeVesting,
+  CreateVestingAccount,
 }
 
 export function identifyVestingInstruction(
@@ -39,23 +78,34 @@ export function identifyVestingInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([242, 35, 198, 137, 82, 225, 242, 182]),
+        new Uint8Array([108, 216, 210, 231, 0, 212, 42, 64]),
       ),
       0,
     )
   ) {
-    return VestingInstruction.Deposit;
+    return VestingInstruction.ClaimTokens;
   }
   if (
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([183, 18, 70, 156, 148, 109, 161, 34]),
+        new Uint8Array([213, 201, 100, 57, 56, 236, 201, 124]),
       ),
       0,
     )
   ) {
-    return VestingInstruction.Withdraw;
+    return VestingInstruction.CreateEmployeeVesting;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([129, 178, 2, 13, 217, 172, 230, 218]),
+      ),
+      0,
+    )
+  ) {
+    return VestingInstruction.CreateVestingAccount;
   }
   throw new Error(
     "The provided instruction could not be identified as a vesting instruction.",
@@ -63,32 +113,42 @@ export function identifyVestingInstruction(
 }
 
 export type ParsedVestingInstruction<
-  TProgram extends string = "EHPUBQcoqciVo4iWdJ9ppU1xvMt7pg3V4ecVdkHCYb1v",
+  TProgram extends string = "FnGSzFa8EmF8CwrVTxXSUw3BmKN3LXVgRHy4PyJLbJuS",
 > =
   | ({
-      instructionType: VestingInstruction.Deposit;
-    } & ParsedDepositInstruction<TProgram>)
+      instructionType: VestingInstruction.ClaimTokens;
+    } & ParsedClaimTokensInstruction<TProgram>)
   | ({
-      instructionType: VestingInstruction.Withdraw;
-    } & ParsedWithdrawInstruction<TProgram>);
+      instructionType: VestingInstruction.CreateEmployeeVesting;
+    } & ParsedCreateEmployeeVestingInstruction<TProgram>)
+  | ({
+      instructionType: VestingInstruction.CreateVestingAccount;
+    } & ParsedCreateVestingAccountInstruction<TProgram>);
 
 export function parseVestingInstruction<TProgram extends string>(
   instruction: Instruction<TProgram> & InstructionWithData<ReadonlyUint8Array>,
 ): ParsedVestingInstruction<TProgram> {
   const instructionType = identifyVestingInstruction(instruction);
   switch (instructionType) {
-    case VestingInstruction.Deposit: {
+    case VestingInstruction.ClaimTokens: {
       assertIsInstructionWithAccounts(instruction);
       return {
-        instructionType: VestingInstruction.Deposit,
-        ...parseDepositInstruction(instruction),
+        instructionType: VestingInstruction.ClaimTokens,
+        ...parseClaimTokensInstruction(instruction),
       };
     }
-    case VestingInstruction.Withdraw: {
+    case VestingInstruction.CreateEmployeeVesting: {
       assertIsInstructionWithAccounts(instruction);
       return {
-        instructionType: VestingInstruction.Withdraw,
-        ...parseWithdrawInstruction(instruction),
+        instructionType: VestingInstruction.CreateEmployeeVesting,
+        ...parseCreateEmployeeVestingInstruction(instruction),
+      };
+    }
+    case VestingInstruction.CreateVestingAccount: {
+      assertIsInstructionWithAccounts(instruction);
+      return {
+        instructionType: VestingInstruction.CreateVestingAccount,
+        ...parseCreateVestingAccountInstruction(instruction),
       };
     }
     default:
