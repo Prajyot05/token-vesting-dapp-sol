@@ -1,178 +1,295 @@
-#[cfg(test)]
-mod tests {
-    use crate::ID as ANCHOR_PROGRAM_ID;
-    use litesvm::LiteSVM;
-    use solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
-        signature::Keypair,
-        signer::Signer,
-        system_program,
-        transaction::Transaction,
+use super::*;
+use litesvm::LiteSVM;
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+    sysvar::clock::Clock,
+};
+use anchor_spl::{token, associated_token};
+
+// Anchor discriminator calculation
+fn get_discriminator(name: &str) -> [u8; 8] {
+    let preimage = format!("global:{}", name);
+    let mut sighash = [0u8; 8];
+    sighash.copy_from_slice(
+        &solana_sdk::hash::hash(preimage.as_bytes()).to_bytes()[..8],
+    );
+    sighash
+}
+
+// Simple SPL token mint/transfer utilities
+fn create_mint_ix(payer: &Pubkey, mint: &Pubkey, authority: &Pubkey, decimals: u8) -> Vec<Instruction> {
+    // solana_sdk system program create account
+    let create_acc_ix = solana_sdk::system_instruction::create_account(
+        payer,
+        mint,
+        10_000_000,
+        82, // Mint size
+        &to_sdk_pubkey(&token::ID),
+    );
+    
+    // anchor_spl token initialize_mint
+    let mut init_mint_data = vec![0]; // InitializeMint2 instruction index is 0 for InitializeMint, 20 for InitializeMint2. Let's use InitializeMint which is 0
+    init_mint_data.push(decimals);
+    init_mint_data.extend_from_slice(authority.as_ref());
+    init_mint_data.push(0); // no freeze authority
+
+    let init_mint_ix = Instruction {
+        program_id: to_sdk_pubkey(&token::ID),
+        accounts: vec![
+            AccountMeta::new(*mint, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::rent::id(), false),
+        ],
+        data: init_mint_data,
     };
 
-    const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+    vec![create_acc_ix, init_mint_ix]
+}
 
-    fn get_vesting_pda(signer: &Pubkey) -> (Pubkey, u8) {
-        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
-        Pubkey::find_program_address(&[b"vesting", signer.as_ref()], &program_id)
+fn mint_to_ix(mint: &Pubkey, ata: &Pubkey, authority: &Pubkey, amount: u64) -> Instruction {
+    let mut data = vec![7]; // MintTo instruction index is 7
+    data.extend_from_slice(&amount.to_le_bytes());
+
+    Instruction {
+        program_id: to_sdk_pubkey(&token::ID),
+        accounts: vec![
+            AccountMeta::new(*mint, false),
+            AccountMeta::new(*ata, false),
+            AccountMeta::new_readonly(*authority, true),
+        ],
+        data,
     }
+}
 
-    fn create_deposit_ix(signer: &Pubkey, vesting: &Pubkey, amount: u64) -> Instruction {
-        // Anchor discriminator for "deposit" = hash("global:deposit")[0..8]
-        let discriminator: [u8; 8] = [242, 35, 198, 137, 82, 225, 242, 182];
-        let mut data = discriminator.to_vec();
-        data.extend_from_slice(&amount.to_le_bytes());
+// Pubkey converters because of solana_sdk and solana_program version mismatch
+fn to_sdk_pubkey(p: &anchor_lang::prelude::Pubkey) -> Pubkey {
+    Pubkey::new_from_array(p.to_bytes())
+}
 
-        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+fn get_vesting_pda(company_name: &str) -> (Pubkey, u8) {
+    let pda = Pubkey::find_program_address(&[company_name.as_bytes()], &to_sdk_pubkey(&crate::ID));
+    (pda.0, pda.1)
+}
 
-        Instruction {
-            program_id,
-            accounts: vec![
-                AccountMeta::new(*signer, true),
-                AccountMeta::new(*vesting, false),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ],
-            data,
-        }
-    }
+fn get_treasury_pda(company_name: &str) -> (Pubkey, u8) {
+    let pda = Pubkey::find_program_address(&[b"vesting_treasury", company_name.as_bytes()], &to_sdk_pubkey(&crate::ID));
+    (pda.0, pda.1)
+}
 
-    fn create_withdraw_ix(signer: &Pubkey, vesting: &Pubkey) -> Instruction {
-        // Anchor discriminator for "withdraw" = hash("global:withdraw")[0..8]
-        let discriminator: [u8; 8] = [183, 18, 70, 156, 148, 109, 161, 34];
+fn get_employee_pda(beneficiary: &Pubkey, vesting_pda: &Pubkey) -> (Pubkey, u8) {
+    let pda = Pubkey::find_program_address(
+        &[
+            b"employee_vesting",
+            beneficiary.as_ref(),
+            vesting_pda.as_ref(),
+        ],
+        &to_sdk_pubkey(&crate::ID),
+    );
+    (pda.0, pda.1)
+}
 
-        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
+fn get_ata(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
+    let pda = Pubkey::find_program_address(
+        &[
+            wallet.as_ref(),
+            to_sdk_pubkey(&token::ID).as_ref(),
+            mint.as_ref(),
+        ],
+        &to_sdk_pubkey(&associated_token::ID),
+    );
+    pda.0
+}
 
-        Instruction {
-            program_id,
-            accounts: vec![
-                AccountMeta::new(*signer, true),
-                AccountMeta::new(*vesting, false),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ],
-            data: discriminator.to_vec(),
-        }
-    }
+#[test]
+fn test_vesting_flow() {
+    let mut svm = LiteSVM::new();
 
-    #[test]
-    fn test_deposit_and_withdraw() {
-        let mut svm = LiteSVM::new();
+    let owner = Keypair::new();
+    let employee = Keypair::new();
+    let mint_keypair = Keypair::new();
+    
+    // Give owner and employee some SOL
+    svm.airdrop(&owner.pubkey(), 10 * 1_000_000_000).unwrap();
+    svm.airdrop(&employee.pubkey(), 10 * 1_000_000_000).unwrap();
 
-        // Load the program
-        let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
-        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
-        svm.add_program(program_id, program_bytes);
+    // Add program to LiteSVM
+    let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
+    svm.add_program(to_sdk_pubkey(&crate::ID), program_bytes).unwrap();
 
-        // Create a user with some SOL
-        let user = Keypair::new();
-        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+    let company_name = "TestCompany".to_string();
+    let decimals = 9;
 
-        // Get vesting PDA
-        let (vesting_pda, _bump) = get_vesting_pda(&user.pubkey());
+    // 1. Create Mint
+    let mint_ixs = create_mint_ix(&owner.pubkey(), &mint_keypair.pubkey(), &owner.pubkey(), decimals);
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &mint_ixs,
+        Some(&owner.pubkey()),
+        &[&owner, &mint_keypair],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
 
-        // Deposit 1 SOL
-        let deposit_amount = LAMPORTS_PER_SOL;
-        let deposit_ix = create_deposit_ix(&user.pubkey(), &vesting_pda, deposit_amount);
+    // 2. Create Vesting Account
+    let (vesting_pda, _) = get_vesting_pda(&company_name);
+    let (treasury_pda, _) = get_treasury_pda(&company_name);
 
-        let blockhash = svm.latest_blockhash();
-        let deposit_tx = Transaction::new_signed_with_payer(
-            &[deposit_ix],
-            Some(&user.pubkey()),
-            &[&user],
-            blockhash,
-        );
+    let mut data = get_discriminator("create_vesting_account").to_vec();
+    data.extend_from_slice(&(company_name.len() as u32).to_le_bytes());
+    data.extend_from_slice(company_name.as_bytes());
 
-        let result = svm.send_transaction(deposit_tx);
-        assert!(result.is_ok(), "Deposit should succeed");
+    let create_vesting_ix = Instruction {
+        program_id: to_sdk_pubkey(&crate::ID),
+        accounts: vec![
+            AccountMeta::new(owner.pubkey(), true),
+            AccountMeta::new(vesting_pda, false),
+            AccountMeta::new_readonly(mint_keypair.pubkey(), false),
+            AccountMeta::new(treasury_pda, false),
+            AccountMeta::new_readonly(to_sdk_pubkey(&token::ID), false),
+            AccountMeta::new_readonly(to_sdk_pubkey(&anchor_lang::system_program::ID), false),
+        ],
+        data,
+    };
 
-        // Check vesting balance
-        let vesting_account = svm.get_account(&vesting_pda).unwrap();
-        assert_eq!(vesting_account.lamports, deposit_amount);
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[create_vesting_ix],
+        Some(&owner.pubkey()),
+        &[&owner],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
 
-        // Withdraw
-        let withdraw_ix = create_withdraw_ix(&user.pubkey(), &vesting_pda);
+    // 3. Fund Treasury
+    let total_amount: u64 = 1_000_000;
+    let fund_treasury_ix = mint_to_ix(
+        &mint_keypair.pubkey(),
+        &treasury_pda,
+        &owner.pubkey(),
+        total_amount,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[fund_treasury_ix],
+        Some(&owner.pubkey()),
+        &[&owner],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
 
-        let blockhash = svm.latest_blockhash();
-        let withdraw_tx = Transaction::new_signed_with_payer(
-            &[withdraw_ix],
-            Some(&user.pubkey()),
-            &[&user],
-            blockhash,
-        );
+    // 4. Create Employee Vesting
+    let (employee_pda, _) = get_employee_pda(&employee.pubkey(), &vesting_pda);
+    
+    // Use current LiteSVM clock time
+    let clock = svm.get_sysvar::<Clock>();
+    let start_time = clock.unix_timestamp;
+    let end_time = start_time + 100; // 100 seconds vesting
+    let cliff_time = start_time + 10; // 10 seconds cliff
 
-        let result = svm.send_transaction(withdraw_tx);
-        assert!(result.is_ok(), "Withdraw should succeed");
+    let mut data = get_discriminator("create_employee_vesting").to_vec();
+    data.extend_from_slice(&start_time.to_le_bytes());
+    data.extend_from_slice(&end_time.to_le_bytes());
+    data.extend_from_slice(&total_amount.to_le_bytes());
+    data.extend_from_slice(&cliff_time.to_le_bytes());
 
-        // Check vesting is empty (account may not exist or have 0 lamports)
-        let vesting_account = svm.get_account(&vesting_pda);
-        assert!(
-            vesting_account.is_none() || vesting_account.unwrap().lamports == 0,
-            "Vesting should be empty after withdraw"
-        );
-    }
+    let create_employee_ix = Instruction {
+        program_id: to_sdk_pubkey(&crate::ID),
+        accounts: vec![
+            AccountMeta::new(owner.pubkey(), true),
+            AccountMeta::new_readonly(employee.pubkey(), false),
+            AccountMeta::new_readonly(vesting_pda, false),
+            AccountMeta::new(employee_pda, false),
+            AccountMeta::new_readonly(to_sdk_pubkey(&anchor_lang::system_program::ID), false),
+        ],
+        data,
+    };
 
-    #[test]
-    fn test_deposit_fails_if_vesting_has_funds() {
-        let mut svm = LiteSVM::new();
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[create_employee_ix],
+        Some(&owner.pubkey()),
+        &[&owner],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
 
-        let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
-        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
-        svm.add_program(program_id, program_bytes);
+    // 5. Claim Tokens (Before Cliff - Should Fail)
+    let employee_ata = get_ata(&employee.pubkey(), &mint_keypair.pubkey());
+    
+    let mut data = get_discriminator("claim_tokens").to_vec();
+    data.extend_from_slice(&(company_name.len() as u32).to_le_bytes());
+    data.extend_from_slice(company_name.as_bytes());
 
-        let user = Keypair::new();
-        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+    let claim_ix = Instruction {
+        program_id: to_sdk_pubkey(&crate::ID),
+        accounts: vec![
+            AccountMeta::new(employee.pubkey(), true),
+            AccountMeta::new(employee_pda, false),
+            AccountMeta::new(vesting_pda, false),
+            AccountMeta::new_readonly(mint_keypair.pubkey(), false),
+            AccountMeta::new(treasury_pda, false),
+            AccountMeta::new(employee_ata, false),
+            AccountMeta::new_readonly(to_sdk_pubkey(&token::ID), false),
+            AccountMeta::new_readonly(to_sdk_pubkey(&associated_token::ID), false),
+            AccountMeta::new_readonly(to_sdk_pubkey(&anchor_lang::system_program::ID), false),
+        ],
+        data: data.clone(),
+    };
 
-        let (vesting_pda, _bump) = get_vesting_pda(&user.pubkey());
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[claim_ix.clone()],
+        Some(&employee.pubkey()),
+        &[&employee],
+        blockhash,
+    );
+    let result = svm.send_transaction(tx);
+    assert!(result.is_err(), "Should fail before cliff");
 
-        // First deposit
-        let deposit_ix = create_deposit_ix(&user.pubkey(), &vesting_pda, LAMPORTS_PER_SOL);
-        let blockhash = svm.latest_blockhash();
-        let tx = Transaction::new_signed_with_payer(
-            &[deposit_ix],
-            Some(&user.pubkey()),
-            &[&user],
-            blockhash,
-        );
-        svm.send_transaction(tx).unwrap();
+    // 6. Warp time to after cliff, halfway through vesting
+    let mut new_clock = clock.clone();
+    new_clock.unix_timestamp = start_time + 50; // 50% vested
+    svm.set_sysvar::<Clock>(&new_clock);
 
-        // Second deposit should fail
-        let deposit_ix2 = create_deposit_ix(&user.pubkey(), &vesting_pda, LAMPORTS_PER_SOL);
-        let blockhash = svm.latest_blockhash();
-        let tx2 = Transaction::new_signed_with_payer(
-            &[deposit_ix2],
-            Some(&user.pubkey()),
-            &[&user],
-            blockhash,
-        );
+    // Add a dummy transfer to ensure unique transaction signature
+    let dummy_ix1 = solana_sdk::system_instruction::transfer(&employee.pubkey(), &Keypair::new().pubkey(), 1);
 
-        let result = svm.send_transaction(tx2);
-        assert!(result.is_err(), "Second deposit should fail");
-    }
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[claim_ix.clone(), dummy_ix1],
+        Some(&employee.pubkey()),
+        &[&employee],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
 
-    #[test]
-    fn test_withdraw_fails_if_vesting_empty() {
-        let mut svm = LiteSVM::new();
+    // Check balance (should be 50% = 500_000)
+    let balance = svm.get_account(&employee_ata).unwrap().data;
+    // Basic decode of spl token balance (offset 64 is amount as u64)
+    let amount = u64::from_le_bytes(balance[64..72].try_into().unwrap());
+    assert_eq!(amount, 500_000);
 
-        let program_bytes = include_bytes!("../../../target/deploy/vesting.so");
-        let program_id = Pubkey::new_from_array(ANCHOR_PROGRAM_ID.to_bytes());
-        svm.add_program(program_id, program_bytes);
+    // 7. Warp time to end of vesting
+    let mut new_clock = clock;
+    new_clock.unix_timestamp = end_time + 1; // 100% vested
+    svm.set_sysvar::<Clock>(&new_clock);
 
-        let user = Keypair::new();
-        svm.airdrop(&user.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
+    // Add another dummy transfer
+    let dummy_ix2 = solana_sdk::system_instruction::transfer(&employee.pubkey(), &Keypair::new().pubkey(), 2);
 
-        let (vesting_pda, _bump) = get_vesting_pda(&user.pubkey());
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[claim_ix, dummy_ix2],
+        Some(&employee.pubkey()),
+        &[&employee],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
 
-        // Try to withdraw from empty vesting
-        let withdraw_ix = create_withdraw_ix(&user.pubkey(), &vesting_pda);
-        let blockhash = svm.latest_blockhash();
-        let tx = Transaction::new_signed_with_payer(
-            &[withdraw_ix],
-            Some(&user.pubkey()),
-            &[&user],
-            blockhash,
-        );
-
-        let result = svm.send_transaction(tx);
-        assert!(result.is_err(), "Withdraw from empty vesting should fail");
-    }
+    // Check balance (should be 100% = 1_000_000)
+    let balance = svm.get_account(&employee_ata).unwrap().data;
+    let amount = u64::from_le_bytes(balance[64..72].try_into().unwrap());
+    assert_eq!(amount, 1_000_000);
 }
